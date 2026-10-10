@@ -2,6 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { useMemo, useState } from 'react'
 import { budgetFor, DEFAULT_SETTINGS, live, skipPledge } from '../db'
 import { DueList } from '../components/DueList'
+import { SyncStatus } from '../components/SyncStatus'
 import { VoiceEntry } from '../components/VoiceEntry'
 import { Icon, ReliabilityChip } from '../components/ui'
 import { MONTHS, todayISO, yearOf } from '../lib/dates'
@@ -56,6 +57,7 @@ export function Home({ onOpenForm, goTo }: { onOpenForm: (d: DonationDraft, noti
 
   return (
     <div className="stack" style={{ gap: 16 }}>
+      <SyncStatus />
       <VoiceEntry onOpenForm={onOpenForm} />
 
       <DueList

@@ -1,23 +1,9 @@
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from 'fflate'
-import { db, saveSettings, DEFAULT_SETTINGS } from '../db'
-import type { Donation, Foundation, Pledge, Receipt, Settings } from '../types'
+import { db, saveSettings } from '../db'
 import { RECEIPT_STATUS_LABEL, RELIABILITY_LABEL } from '../types'
 import { todayISO } from './dates'
-import { mergeRecords } from './merge'
 import { extensionFor } from './receipts'
-
-const BACKUP_VERSION = 1
-
-interface BackupData {
-  app: 'donation-tracker'
-  version: number
-  exportedAt: string
-  foundations: Foundation[]
-  donations: Donation[]
-  pledges: Pledge[]
-  receipts: Array<Omit<Receipt, 'blob'> & { path: string }>
-  settings: Settings
-}
+import { applySnapshot, buildSnapshot, type ApplySummary, type Snapshot } from './snapshot'
 
 export function downloadBlob(blob: Blob, fileName: string) {
   const url = URL.createObjectURL(blob)
@@ -38,41 +24,20 @@ export async function exportBackup(): Promise<void> {
 }
 
 export async function buildBackupZip(): Promise<Uint8Array> {
-  const [foundations, donations, pledges, receipts, settings] = await Promise.all([
-    db.foundations.toArray(),
-    db.donations.toArray(),
-    db.pledges.toArray(),
-    db.receipts.toArray(),
-    db.settings.get('settings'),
-  ])
+  const snapshot = await buildSnapshot()
+  const blobs = new Map((await db.receipts.toArray()).map((r) => [r.id, r.blob]))
   const files: Zippable = {}
-  const receiptMeta: BackupData['receipts'] = []
-  for (const r of receipts) {
-    const { blob, ...meta } = r
-    const path = r.deleted ? '' : `receipts/${r.id}.${extensionFor(r.mimeType, r.fileName)}`
-    if (path) files[path] = [new Uint8Array(await blob.arrayBuffer()), { level: 0 }]
-    receiptMeta.push({ ...meta, path })
+  for (const meta of snapshot.receipts) {
+    const blob = blobs.get(meta.id)
+    if (meta.deleted || !blob?.size) continue
+    meta.path = `receipts/${meta.id}.${extensionFor(meta.mimeType, meta.fileName)}`
+    files[meta.path] = [new Uint8Array(await blob.arrayBuffer()), { level: 0 }]
   }
-  const data: BackupData = {
-    app: 'donation-tracker',
-    version: BACKUP_VERSION,
-    exportedAt: new Date().toISOString(),
-    foundations,
-    donations,
-    pledges,
-    receipts: receiptMeta,
-    settings: settings ?? DEFAULT_SETTINGS,
-  }
-  files['data.json'] = strToU8(JSON.stringify(data, null, 2))
+  files['data.json'] = strToU8(JSON.stringify(snapshot, null, 2))
   return zipSync(files)
 }
 
-export interface ImportSummary {
-  foundations: number
-  donations: number
-  pledges: number
-  receipts: number
-}
+export type ImportSummary = ApplySummary
 
 /** Merges a backup into this device: newer version of each record wins, nothing is blindly overwritten. */
 export async function importBackup(file: Blob): Promise<ImportSummary> {
@@ -83,31 +48,10 @@ export async function importBackup(file: Blob): Promise<ImportSummary> {
     throw new Error('That file is not a backup .zip from this app.')
   }
   if (!entries['data.json']) throw new Error('Backup is missing data.json.')
-  const data = JSON.parse(strFromU8(entries['data.json'])) as BackupData
-  if (data.app !== 'donation-tracker') throw new Error('That file is not a backup from this app.')
-
-  return db.transaction('rw', [db.foundations, db.donations, db.pledges, db.receipts, db.settings], async () => {
-    const f = mergeRecords(await db.foundations.toArray(), data.foundations)
-    const d = mergeRecords(await db.donations.toArray(), data.donations)
-    const p = mergeRecords(await db.pledges.toArray(), data.pledges)
-    const incomingReceipts: Receipt[] = data.receipts.map(({ path, ...meta }) => ({
-      ...meta,
-      blob: path && entries[path] ? new Blob([entries[path] as Uint8Array<ArrayBuffer>], { type: meta.mimeType }) : new Blob(),
-    }))
-    const r = mergeRecords(
-      (await db.receipts.toArray()),
-      incomingReceipts,
-    )
-    await db.foundations.bulkPut(f.changed)
-    await db.donations.bulkPut(d.changed)
-    await db.pledges.bulkPut(p.changed)
-    await db.receipts.bulkPut(r.changed)
-    const local = await db.settings.get('settings')
-    if (data.settings && (!local || data.settings.updatedAt > local.updatedAt)) {
-      await db.settings.put({ ...data.settings, lastBackupAt: local?.lastBackupAt ?? 0 })
-    }
-    return { foundations: f.changed.length, donations: d.changed.length, pledges: p.changed.length, receipts: r.changed.length }
-  })
+  const data = JSON.parse(strFromU8(entries['data.json'])) as Snapshot
+  return applySnapshot(data, (meta) =>
+    meta.path && entries[meta.path] ? new Blob([entries[meta.path] as Uint8Array<ArrayBuffer>], { type: meta.mimeType }) : undefined,
+  )
 }
 
 function csvCell(v: string | number): string {

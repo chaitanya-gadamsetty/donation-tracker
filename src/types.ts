@@ -75,6 +75,8 @@ export interface Receipt extends SyncFields {
   fileName: string
   mimeType: string
   blob: Blob
+  /** Google Drive file holding this receipt, once uploaded by any device. */
+  driveFileId?: string
 }
 
 export interface Settings {

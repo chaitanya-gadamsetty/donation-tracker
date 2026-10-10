@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS, budgetFor, live, saveSettings } from '../db'
 import { exportBackup, exportCSV, importBackup } from '../lib/backup'
 import { formatINR } from '../lib/format'
 import { parseAmount } from '../lib/draft'
+import { describeLastSync, useSync } from '../sync/SyncProvider'
 
 export function Settings() {
   const settings = useLiveQuery(live.settings, []) ?? DEFAULT_SETTINGS
@@ -77,7 +78,7 @@ export function Settings() {
       <div className="card stack">
         <h2>Backup &amp; export</h2>
         <p className="small muted" style={{ margin: 0 }}>
-          Your data lives on this device until Google Drive sync is set up. Export a backup regularly and keep it in iCloud Drive or Google Drive.
+          A backup is a full copy you control, separate from sync. Export one now and then and keep it in iCloud Drive or Google Drive.
           {settings.lastBackupAt ? ` Last backup: ${new Date(settings.lastBackupAt).toLocaleString('en-IN')}.` : ' No backup yet.'}
         </p>
         <div className="row">
@@ -106,10 +107,7 @@ export function Settings() {
         <div className="tiny muted">Restoring merges: for each record, the most recently edited version wins. Nothing newer on this device is overwritten.</div>
       </div>
 
-      <div className="card stack">
-        <h2>Sync</h2>
-        <div className="small muted">Google Drive sync between iPhone and Mac — coming in the next build.</div>
-      </div>
+      <SyncCard />
 
       {storage && (
         <div className="tiny muted">
@@ -117,6 +115,51 @@ export function Settings() {
           {storage.persisted ? 'Protected from automatic browser cleanup' : 'Not yet protected from browser cleanup (install to Home Screen / Dock to protect it)'}
         </div>
       )}
+    </div>
+  )
+}
+
+function SyncCard() {
+  const { state, lastSyncAt, error, connect, syncNow, disconnect } = useSync()
+  const connected = state !== 'off'
+  return (
+    <div className="card stack">
+      <h2>Google Drive sync</h2>
+      {!connected ? (
+        <>
+          <p className="small muted" style={{ margin: 0 }}>
+            Keeps this device and your other devices in step through a hidden app folder in your Google Drive. The app can only see that
+            folder — not your other files, email or account.
+          </p>
+          <ul className="small muted" style={{ margin: 0, paddingLeft: 18 }}>
+            <li>Google will say <em>“Google hasn’t verified this app”</em> — expected for a personal app. Tap <strong>Continue</strong>.</li>
+            <li>It should only ask to <em>“See, create and delete its own configuration data in your Google Drive”</em>. If it asks for anything more, cancel.</li>
+            <li>Check the address bar shows <strong>accounts.google.com</strong> before entering your password.</li>
+          </ul>
+          <div><button className="btn primary" onClick={connect}>Connect Google Drive</button></div>
+        </>
+      ) : (
+        <>
+          <div className="small">
+            {state === 'syncing' && 'Syncing…'}
+            {state === 'ok' && <>Connected · last synced <strong>{describeLastSync(lastSyncAt)}</strong></>}
+            {state === 'needs-signin' && <>Connected · Google sign-in has expired (it lasts about an hour). Tap <strong>Sync now</strong> to sign in again.</>}
+            {state === 'offline' && 'Connected · offline. Changes will sync when you are back online.'}
+            {state === 'error' && 'Connected · the last sync failed.'}
+          </div>
+          <div className="row">
+            <button className="btn primary" onClick={syncNow} disabled={state === 'syncing'}>Sync now</button>
+            <button
+              className="btn"
+              onClick={() => confirm('Disconnect this device from Google Drive? Data stays on this device and in Drive.') && disconnect()}
+            >
+              Disconnect
+            </button>
+          </div>
+          <div className="tiny muted">Syncs automatically while signed in: when the app opens, after each change, and when you come back online. Drive also keeps a daily copy of the last 7 days.</div>
+        </>
+      )}
+      {error && <div className="alert danger">{error}</div>}
     </div>
   )
 }

@@ -8,15 +8,23 @@ import { commitDraft, hasActivePledge, openPledgeFor, type DonationDraft } from 
 import { CADENCES, CATEGORIES, PAYMENT_MODES, RECEIPT_STATUSES, RELIABILITY_LABEL } from '../types'
 import { FoundationPicker } from './FoundationPicker'
 import { Icon, Modal, Segmented } from './ui'
+import { useSync } from '../sync/SyncProvider'
 
-export async function openReceipt(receiptId: string) {
+/** Opens a receipt; if it was attached on another device, fetches it from Google Drive first. */
+export async function openReceipt(receiptId: string, loadFromDrive: (id: string) => Promise<Blob | null>) {
+  // Open the window first: browsers block pop-ups opened after an await.
+  const win = window.open('', '_blank')
   const r = await db.receipts.get(receiptId)
-  if (!r || r.deleted || !r.blob.size) {
-    alert('Receipt file not found on this device.')
+  let blob = r && !r.deleted && r.blob.size ? r.blob : null
+  if (!blob && r?.driveFileId) blob = await loadFromDrive(receiptId)
+  if (!blob) {
+    win?.close()
+    alert(r?.driveFileId ? 'This receipt is in Google Drive. Sync (sign in) first, then try again.' : 'Receipt file not found on this device.')
     return
   }
-  const url = URL.createObjectURL(r.blob)
-  window.open(url, '_blank')
+  const url = URL.createObjectURL(blob)
+  if (win) win.location.href = url
+  else window.open(url, '_blank')
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
@@ -29,6 +37,7 @@ export function DonationForm({ initial, notice, onClose, onSaved }: {
 }) {
   const foundations = useLiveQuery(live.foundations, []) ?? []
   const pledges = useLiveQuery(live.pledges, []) ?? []
+  const { loadReceipt } = useSync()
   const [d, setD] = useState<DonationDraft>(initial)
   const [file, setFile] = useState<File | null>(null)
   const [error, setError] = useState('')
@@ -146,7 +155,7 @@ export function DonationForm({ initial, notice, onClose, onSaved }: {
         <div className="row">
           {d.receiptId && !file ? (
             <>
-              <button type="button" className="btn sm" onClick={() => openReceipt(d.receiptId)}>{Icon.paperclip} View receipt</button>
+              <button type="button" className="btn sm" onClick={() => openReceipt(d.receiptId, loadReceipt)}>{Icon.paperclip} View receipt</button>
               <button
                 type="button"
                 className="btn sm danger"
