@@ -1,11 +1,12 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { useMemo, useState } from 'react'
-import { deleteFoundation, emptyFoundation, live, saveFoundation, type FoundationInput } from '../db'
+import { db, deleteFoundation, emptyFoundation, live, saveFoundation, type FoundationInput } from '../db'
 import { CategoryChip, Icon, Modal, ReliabilityChip, Segmented } from '../components/ui'
 import { yearOf } from '../lib/dates'
-import { formatINR } from '../lib/format'
+import { formatINR, newId } from '../lib/format'
 import { normalize } from '../lib/fuzzy'
-import { CATEGORIES, RELIABILITY, RELIABILITY_LABEL, type Eligibility80G, type Foundation, type Reliability } from '../types'
+import { planBulkAdd, type BulkRow } from '../lib/bulk'
+import { CATEGORIES, RELIABILITY, RELIABILITY_LABEL, type Category, type Eligibility80G, type Foundation, type Reliability } from '../types'
 
 export function Foundations() {
   const foundations = useLiveQuery(live.foundations, []) ?? []
@@ -13,6 +14,7 @@ export function Foundations() {
   const [q, setQ] = useState('')
   const [rel, setRel] = useState<Reliability | ''>('')
   const [editing, setEditing] = useState<FoundationInput | null>(null)
+  const [bulk, setBulk] = useState(false)
   const thisYear = new Date().getFullYear()
 
   const totals = useMemo(() => {
@@ -33,7 +35,10 @@ export function Foundations() {
     <div className="stack">
       <div className="page-head">
         <h1>Foundations</h1>
-        <button className="btn primary" onClick={() => setEditing(emptyFoundation())}>{Icon.plus} Add</button>
+        <div className="row">
+          <button className="btn" onClick={() => setBulk(true)}>Add many</button>
+          <button className="btn primary" onClick={() => setEditing(emptyFoundation())}>{Icon.plus} Add</button>
+        </div>
       </div>
       <input className="input" type="search" placeholder="Search foundations" value={q} onChange={(e) => setQ(e.target.value)} />
       <div className="row">
@@ -77,6 +82,7 @@ export function Foundations() {
         </div>
       </div>
       {editing && <FoundationForm initial={editing} onClose={() => setEditing(null)} />}
+      {bulk && <BulkAdd existing={foundations.map((f) => f.name)} onClose={() => setBulk(false)} />}
     </div>
   )
 }
@@ -178,6 +184,74 @@ function FoundationForm({ initial, onClose }: { initial: FoundationInput | Found
           </div>
         </div>
       </form>
+    </Modal>
+  )
+}
+
+function BulkAdd({ existing, onClose }: { existing: string[]; onClose: () => void }) {
+  const [text, setText] = useState('')
+  const [rows, setRows] = useState<BulkRow[] | null>(null)
+  const [category, setCategory] = useState<Category>('Others')
+  const [done, setDone] = useState('')
+  const selected = rows?.filter((r) => r.include) ?? []
+
+  const add = async () => {
+    const now = Date.now()
+    await db.foundations.bulkPut(
+      selected.map((r, i) => ({ ...emptyFoundation(r.name), category, id: newId(), deleted: 0 as const, updatedAt: now + i })),
+    )
+    setDone(`Added ${selected.length} foundation${selected.length === 1 ? '' : 's'}.`)
+  }
+
+  return (
+    <Modal title="Add many foundations" onClose={onClose}>
+      {done ? (
+        <div className="stack">
+          <div className="alert ok">{done} Set each one's category and reliability by tapping it in the list.</div>
+          <button className="btn primary" onClick={onClose}>Done</button>
+        </div>
+      ) : !rows ? (
+        <div className="stack">
+          <label className="field">
+            One foundation per line
+            <textarea className="input" style={{ minHeight: 220 }} value={text} onChange={(e) => setText(e.target.value)} placeholder={'Save the Children\nChild Help Foundation\n…'} autoFocus />
+          </label>
+          <div className="row" style={{ justifyContent: 'flex-end' }}>
+            <button className="btn" onClick={onClose}>Cancel</button>
+            <button className="btn primary" disabled={!text.trim()} onClick={() => setRows(planBulkAdd(text, existing))}>Review</button>
+          </div>
+        </div>
+      ) : (
+        <div className="stack">
+          <div className="small muted">
+            {selected.length} of {rows.length} selected. Names already saved, or that look like a duplicate, are unticked. Tick them if they really are different.
+          </div>
+          <div className="card" style={{ padding: '4px 12px', maxHeight: '45dvh', overflowY: 'auto' }}>
+            {rows.map((r, i) => (
+              <label key={i} className="list-item" style={{ cursor: 'pointer', gap: 10 }}>
+                <input
+                  type="checkbox"
+                  checked={r.include}
+                  onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, include: e.target.checked } : x)))}
+                />
+                <span className="grow stack" style={{ gap: 2, minWidth: 0 }}>
+                  <span>{r.name}</span>
+                  {r.status === 'exists' && <span className="tiny muted">Already saved</span>}
+                  {r.status === 'similar' && <span className="tiny" style={{ color: 'var(--warn)' }}>Looks like “{r.similarTo}”</span>}
+                </span>
+              </label>
+            ))}
+          </div>
+          <label className="field">
+            Category for all (change individually later)
+            <Segmented options={CATEGORIES} value={category} onChange={setCategory} />
+          </label>
+          <div className="row" style={{ justifyContent: 'flex-end' }}>
+            <button className="btn" onClick={() => setRows(null)}>Back</button>
+            <button className="btn primary" disabled={!selected.length} onClick={add}>Add {selected.length}</button>
+          </div>
+        </div>
+      )}
     </Modal>
   )
 }
