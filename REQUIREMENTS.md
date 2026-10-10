@@ -1,6 +1,6 @@
 # Donation Tracker — Requirements v0.2
 
-_Last updated: 2026-10-10 · Status: v1 (local) built; Google Drive sync + GitHub Pages deploy next_
+_Last updated: 2026-10-11 · Status: v1 live on GitHub Pages with Google Drive sync_
 
 ## 1. Problem Statement
 I donate frequently (30+ foundations, INR) via multiple channels. I can't quickly answer *"who have I paid, how much, and what's my total this year?"*, recurring pledges live in my head, and receipts are scattered.
